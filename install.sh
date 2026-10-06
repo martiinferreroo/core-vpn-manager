@@ -72,10 +72,14 @@ CVM_USER="$USER_NAME" CVM_PASS="$PASS" CVM_PORT="$PORT" CVM_SECRET="$SECRET" CVM
 import json, os
 from werkzeug.security import generate_password_hash
 e = os.environ
-json.dump({"user": e["CVM_USER"], "hash": generate_password_hash(e["CVM_PASS"]),
-           "port": int(e["CVM_PORT"]), "secret": e["CVM_SECRET"], "host": "0.0.0.0"}, open(e["CVM_OUT"], "w"), indent=1)
+json.dump({"port": int(e["CVM_PORT"]), "secret": e["CVM_SECRET"], "host": "0.0.0.0"}, open(e["CVM_OUT"], "w"), indent=1)
+up = os.path.join(os.path.dirname(e["CVM_OUT"]), "users.json")
+try: users = json.load(open(up))          # en reinstalaciones se conservan los demás usuarios
+except Exception: users = {}
+users[e["CVM_USER"]] = generate_password_hash(e["CVM_PASS"])
+with os.fdopen(os.open(up, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f: json.dump(users, f, indent=1)
 PY
-chmod 600 "$CONF/config.json"
+chmod 600 "$CONF"/*.json
 unset PASS PASS2
 
 echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-core-vpn-manager.conf

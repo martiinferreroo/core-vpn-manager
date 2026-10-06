@@ -9,7 +9,9 @@ Pequeña utilidad para servidores Linux con panel web para gestionar **servidore
 - **Estadísticas**: tráfico total del servidor, tráfico por cliente y estado de conexión.
 - **Redirección de puertos** al estilo router: puerto externo, interno, IP interna, protocolo (TCP, UDP o ambos) y descripción. Se puede activar y desactivar cada regla.
 - **Rutas**: ver, añadir y eliminar rutas del sistema. Las rutas añadidas desde el panel se restauran al reiniciar.
-- Panel protegido con usuario y contraseña, límite de intentos de login, interfaz clara y responsive (con modo oscuro).
+- **Panel** (dashboard) con CPU, memoria, disco, uptime, interfaces e IPs del servidor y los **clientes conectados ahora mismo** en todas las VPN.
+- **Usuarios**: varios usuarios del panel; añadir, eliminar y cambiar contraseñas (al cambiar una contraseña se cierran las demás sesiones de ese usuario).
+- Login con límite de intentos, interfaz clara y responsive (con modo oscuro).
 
 ## Requisitos
 
@@ -38,7 +40,7 @@ Para desinstalar: `sudo ./uninstall.sh`.
 | Redirección de puertos | Cadenas propias de iptables: `CVM_DNAT` (nat/PREROUTING, DNAT), `CVM_FWD` (filter/FORWARD) y `CVM_NAT` (nat/POSTROUTING, MASQUERADE para que las respuestas vuelvan por el servidor) |
 | NAT de las VPN | Regla MASQUERADE por servidor en `CVM_NAT`, si se activa «NAT» |
 | Rutas | `ip route add/del/replace` y lectura con `ip -j route`; las rutas creadas se guardan y reaplican al arrancar |
-| Datos | `/var/lib/core-vpn-manager/data.json`; configuración en `/etc/core-vpn-manager/config.json` (permisos 600) |
+| Datos | `/var/lib/core-vpn-manager/data.json`; configuración en `/etc/core-vpn-manager/config.json` y usuarios (con hash) en `users.json`, ambos con permisos 600 |
 
 Las cadenas `CVM_*` se reconstruyen en cada cambio y al arrancar el servicio, sin tocar el resto de tus reglas. Si usas `nftables` puro u otro firewall con política restrictiva, abre los puertos de las VPN.
 
@@ -71,8 +73,9 @@ core-vpn-manager/
 
 ```bash
 python3 -m venv venv && . venv/bin/activate && pip install -r requirements.txt
-echo '{"user":"admin","hash":"","port":8080,"secret":"dev"}' > /tmp/cfg.json   # genera el hash con werkzeug
-sudo CVM_CONFIG=/tmp/cfg.json CVM_DATA=/tmp/data.json venv/bin/python app/server.py
+echo '{"port":8080,"secret":"dev"}' > /tmp/cfg.json
+python -c "import json;from werkzeug.security import generate_password_hash as g;print(json.dumps({'admin':g('admin1234')}))" > /tmp/users.json
+sudo CVM_CONFIG=/tmp/cfg.json CVM_USERS=/tmp/users.json CVM_DATA=/tmp/data.json venv/bin/python app/server.py
 ```
 
 ## Limitaciones conocidas

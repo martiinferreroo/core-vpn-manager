@@ -161,23 +161,68 @@ async function routes() {
     await api("/routes", {method: "DELETE", body: r}); toast("Ruta eliminada"); routes(); }));
 }
 
+/* ---------- panel ---------- */
+async function dash() {
+  const x = await api("/dashboard");
+  const pct = (u, t) => t ? Math.round(100 * u / t) : 0, bar = p => `<div class="bar"><i style="width:${p}%"></i></div>`;
+  const up = s => { const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return (d ? d + " d " : "") + h + " h " + m + " min"; };
+  const mp = pct(x.mem.used, x.mem.total), dp = pct(x.disk.used, x.disk.total);
+  view.innerHTML = `<div class="top"><h1>Panel</h1><span class="dim mono">${esc(x.hostname)}</span></div>
+    <div class="stats">
+      <div class="panel stat"><span class="dim">CPU (${x.cores} núcleos)</span><b>${x.cpu}%</b>${bar(x.cpu)}<span class="dim mono">Carga ${x.load.map(n => n.toFixed(2)).join(" ")}</span></div>
+      <div class="panel stat"><span class="dim">Memoria</span><b>${mp}%</b>${bar(mp)}<span class="dim mono">${bytes(x.mem.used)} de ${bytes(x.mem.total)}</span></div>
+      <div class="panel stat"><span class="dim">Disco</span><b>${dp}%</b>${bar(dp)}<span class="dim mono">${bytes(x.disk.used)} de ${bytes(x.disk.total)}</span></div>
+      <div class="panel stat"><span class="dim">Tiempo en marcha</span><b>${up(x.uptime)}</b></div></div>
+    <div class="stats">
+      <a class="panel stat" href="#/wg"><span class="dim">Servidores WireGuard</span><b>${x.servers.wg[1]} / ${x.servers.wg[0]}</b><span class="dim">activos</span></a>
+      <a class="panel stat" href="#/ovpn"><span class="dim">Servidores OpenVPN</span><b>${x.servers.ovpn[1]} / ${x.servers.ovpn[0]}</b><span class="dim">activos</span></a>
+      <a class="panel stat" href="#/fwd"><span class="dim">Redirecciones activas</span><b>${x.forwards}</b></a>
+      <div class="panel stat"><span class="dim">Clientes conectados</span><b>${x.clients.length}</b></div></div>
+    <div class="panel mono dim">${esc(x.os)} &nbsp; kernel ${esc(x.kernel)}${x.gateway ? ` &nbsp; puerta de enlace ${esc(x.gateway)} (${esc(x.wan)})` : ""}</div>
+    <h3>Clientes conectados</h3>
+    <div class="panel">${x.clients.length ? `<table><tr><th>Cliente</th><th>Servidor</th><th>IP en la VPN</th><th>Origen</th><th>Tráfico ↓ / ↑</th><th>Último contacto</th></tr>
+      ${x.clients.map(c => `<tr><td>${esc(c.name)}</td><td><a href="#/${c.kind}/${c.sid}">${esc(c.server)}</a> <span class="pill">${c.kind === "wg" ? "WireGuard" : "OpenVPN"}</span></td>
+        <td class="mono">${esc(c.ip || "-")}</td><td class="mono">${esc(c.ep || "-")}</td><td class="mono">${bytes(c.rx)} / ${bytes(c.tx)}</td>
+        <td>${c.ago == null ? "-" : "hace " + c.ago + " s"}</td></tr>`).join("")}</table>` : `<p class="empty">No hay ningún cliente conectado ahora mismo.</p>`}</div>
+    <h3>Interfaces de red</h3>
+    <div class="panel"><table><tr><th>Interfaz</th><th>Direcciones IP</th><th>Estado</th><th>Tráfico ↓ / ↑</th></tr>
+      ${x.ifaces.map(i => `<tr><td class="mono">${esc(i.name)}</td><td class="mono">${esc(i.ips.join(", ") || "-")}</td><td>${esc(i.state)}</td><td class="mono">${bytes(i.rx)} / ${bytes(i.tx)}</td></tr>`).join("")}</table></div>`;
+}
+
+/* ---------- usuarios ---------- */
+async function usersPage() {
+  const {users, me} = await api("/users");
+  view.innerHTML = `<div class="top"><h1>Usuarios</h1><button class="primary" id="add">Añadir usuario</button></div>
+    <div class="panel"><table><tr><th>Usuario</th><th></th></tr>${users.map(u => `<tr><td>${esc(u)} ${u === me ? '<span class="pill ok">Tú</span>' : ""}</td>
+      <td class="act"><button class="sm" data-pw="${esc(u)}">Cambiar contraseña</button> ${u === me ? "" : `<button class="sm danger" data-del="${esc(u)}">Eliminar</button>`}</td></tr>`).join("")}</table></div>`;
+  const pw = [{k: "password", label: "Nueva contraseña", type: "password", hint: "Mínimo 8 caracteres"}, {k: "repeat", label: "Repite la contraseña", type: "password"}];
+  const same = o => { if (o.password !== o.repeat) throw new Error("Las contraseñas no coinciden"); };
+  $("#add").onclick = () => formModal("Añadir usuario", [{k: "username", label: "Nombre de usuario", hint: "3-32 caracteres: letras, números, . _ -"}, ...pw],
+    async o => { same(o); await api("/users", {method: "POST", body: o}); toast("Usuario creado"); usersPage(); }, "Crear usuario");
+  view.querySelectorAll("[data-pw]").forEach(b => b.onclick = () => { const u = b.dataset.pw;
+    formModal(`Cambiar contraseña de ${u}`, [...(u === me ? [{k: "current", label: "Contraseña actual", type: "password"}] : []), ...pw],
+      async o => { same(o); await api(`/users/${encodeURIComponent(u)}/password`, {method: "PUT", body: o}); toast("Contraseña actualizada"); }); });
+  view.querySelectorAll("[data-del]").forEach(b => b.onclick = guard(async () => { if (!confirm(`¿Eliminar al usuario «${b.dataset.del}»?`)) return;
+    await api("/users/" + encodeURIComponent(b.dataset.del), {method: "DELETE"}); toast("Usuario eliminado"); usersPage(); }));
+}
+
 /* ---------- router y sesión ---------- */
 function route() {
   clearInterval(timer);
-  const [, page = "wg", id] = location.hash.split("/");
+  const [, page = "dash", id] = location.hash.split("/");
   document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.dataset.p === page));
   const fn = {wg: () => id ? server("wg", +id) : servers("wg"), ovpn: () => id ? server("ovpn", +id) : servers("ovpn"),
-              fwd: forwards, routes}[page] || (() => servers("wg"));
+              fwd: forwards, routes, users: usersPage, dash}[page] || dash;
   const go = guard(fn); go();
-  if (id) timer = setInterval(go, 5000);
+  if (id || page === "dash") timer = setInterval(go, 5000);
 }
 function showLogin() { $("#app").hidden = true; $("#login").hidden = false; }
-function showApp() { $("#login").hidden = true; $("#app").hidden = false; route(); }
+function showApp(u) { $("#who").textContent = "Sesión: " + u; $("#login").hidden = true; $("#app").hidden = false; route(); }
 $("#loginForm").onsubmit = async e => {
   e.preventDefault(); $("#loginErr").textContent = "";
-  try { await api("/login", {method: "POST", body: Object.fromEntries(new FormData(e.target))}); e.target.reset(); showApp(); }
+  try { const r = await api("/login", {method: "POST", body: Object.fromEntries(new FormData(e.target))}); e.target.reset(); showApp(r.user); }
   catch (x) { $("#loginErr").textContent = x.message; }
 };
 $("#logout").onclick = async () => { await api("/logout", {method: "POST"}).catch(() => {}); showLogin(); };
 window.addEventListener("hashchange", () => { if (!$("#app").hidden) route(); });
-fetch("/api/me").then(r => r.json()).then(j => j.user ? showApp() : showLogin());
+fetch("/api/me").then(r => r.json()).then(j => j.user ? showApp(j.user) : showLogin());

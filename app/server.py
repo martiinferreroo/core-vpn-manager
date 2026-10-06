@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Core VPN Manager - backend (Flask). Debe ejecutarse como root."""
-import hmac, ipaddress, json, os, re, shutil, subprocess, threading, time
+import hashlib, ipaddress, json, os, re, shutil, subprocess, threading, time
 from functools import wraps
 from flask import Flask, Response, jsonify, request, send_from_directory, session
 from werkzeug.exceptions import HTTPException
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 CONF = os.environ.get("CVM_CONFIG", "/etc/core-vpn-manager/config.json")
 DATA = os.environ.get("CVM_DATA", "/var/lib/core-vpn-manager/data.json")
@@ -22,7 +22,8 @@ class Bad(Exception):
     pass
 
 def run(cmd, inp=None):
-    return subprocess.run(cmd, input=inp, capture_output=True, text=True)
+    try: return subprocess.run(cmd, input=inp, capture_output=True, text=True)
+    except FileNotFoundError: return subprocess.CompletedProcess(cmd, 127, "", f"{cmd[0]}: no encontrado")
 
 def sh(cmd, inp=None, check=True):
     r = run(cmd, inp)
@@ -89,10 +90,26 @@ def find_client(s, cid):
         if c["id"] == cid: return c
     raise Bad("Cliente no encontrado")
 
+USERS = os.environ.get("CVM_USERS", os.path.join(os.path.dirname(CONF), "users.json"))
+UNAME = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
+DUMMY = generate_password_hash("dummy")
+
+def users():
+    try: return json.load(open(USERS))
+    except Exception: return {}
+
+def save_users(u): wfile(USERS, json.dumps(u, indent=1))
+def fp(h): return hashlib.sha256(h.encode()).hexdigest()[:16]
+
+if not os.path.exists(USERS) and cfg.get("user") and cfg.get("hash"):  # migración de versiones anteriores
+    save_users({cfg["user"]: cfg["hash"]})
+
 def auth(f):
     @wraps(f)
     def w(*a, **k):
-        if not session.get("u"): return err("No autenticado", 401)
+        u, us = session.get("u"), users()
+        if u not in us or session.get("f") != fp(us[u]):
+            session.clear(); return err("No autenticado", 401)
         return f(*a, **k)
     return w
 
@@ -344,11 +361,7 @@ def srv_create(kind):
         save(d)
     return jsonify(pub(s))
 
-@app.get("/api/servers/<kind>/<int:sid>")
-@auth
-def srv_get(kind, sid):
-    kind_ok(kind); s = find(load(), kind, sid)
-    rx, tx = iface_bytes(s["iface"])
+def clients_state(kind, s):
     st = wg_peers(s["iface"]) if kind == "wg" else ovpn_status(s)
     cl, seen = [], {}
     for c in s["clients"]:
@@ -359,13 +372,23 @@ def srv_get(kind, sid):
             on, ip = bool(x), x.get("ip") or c.get("last_ip", "")
             if x.get("ip") and x["ip"] != c.get("last_ip"): seen[c["id"]] = x["ip"]
         cl.append(dict({k: v for k, v in c.items() if k not in ("priv", "psk")}, online=on, ip=ip,
-                       rx=x.get("rx", 0), tx=x.get("tx", 0), ep=x.get("ep", "")))
-    if seen:  # recuerda la última IP que tuvo cada cliente OpenVPN
-        with LOCK:
-            d = load()
-            for c in find(d, kind, sid)["clients"]:
-                if c["id"] in seen: c["last_ip"] = seen[c["id"]]
-            save(d)
+                       rx=x.get("rx", 0), tx=x.get("tx", 0), ep=x.get("ep", ""), hs=x.get("hs", 0)))
+    return cl, seen
+
+def remember(kind, sid, seen):  # recuerda la última IP que tuvo cada cliente OpenVPN
+    with LOCK:
+        d = load()
+        for c in find(d, kind, sid)["clients"]:
+            if c["id"] in seen: c["last_ip"] = seen[c["id"]]
+        save(d)
+
+@app.get("/api/servers/<kind>/<int:sid>")
+@auth
+def srv_get(kind, sid):
+    kind_ok(kind); s = find(load(), kind, sid)
+    rx, tx = iface_bytes(s["iface"])
+    cl, seen = clients_state(kind, s)
+    if seen: remember(kind, sid, seen)
     return jsonify(dict(pub(s), active=active(s), rx=rx, tx=tx, clients=cl,
                         checks=[{"name": n, "ok": o} for n, o in checks(s)]))
 
@@ -558,6 +581,97 @@ def system():
     links = json.loads(sh(["ip", "-j", "link", "show"]) or "[]")
     return jsonify(hostname=os.uname().nodename, ifaces=[l["ifname"] for l in links])
 
+# --------------------------------------------------------------- panel
+_cpu = [None]
+def cpu_pct():
+    def rd():
+        v = [int(x) for x in open("/proc/stat").readline().split()[1:]]
+        return sum(v), v[3] + v[4]
+    prev = _cpu[0]
+    if prev is None: prev = rd(); time.sleep(0.25)
+    cur = rd(); _cpu[0] = cur
+    dt = cur[0] - prev[0]
+    return round(100 * (1 - (cur[1] - prev[1]) / dt), 1) if dt > 0 else 0.0
+
+@app.get("/api/dashboard")
+@auth
+def dashboard():
+    d = load(); mi = {}
+    for l in open("/proc/meminfo"):
+        p = l.split()
+        if len(p) > 1 and p[1].isdigit(): mi[p[0].rstrip(":")] = int(p[1]) * 1024
+    total = mi.get("MemTotal", 0); du = shutil.disk_usage("/")
+    try: os_name = next(l.split("=", 1)[1].strip().strip('"') for l in open("/etc/os-release") if l.startswith("PRETTY_NAME="))
+    except Exception: os_name = ""
+    try: r = json.loads(sh(["ip", "-j", "route", "show", "default"]) or "[]")[0]
+    except Exception: r = {}
+    ifs = []
+    for l in json.loads(sh(["ip", "-j", "-4", "addr", "show"], check=False) or "[]"):
+        n = l["ifname"]
+        if n == "lo" or n.startswith("veth"): continue
+        rx, tx = iface_bytes(n)
+        ifs.append(dict(name=n, state=l.get("operstate", "").lower(), rx=rx, tx=tx,
+                        ips=[f"{a['local']}/{a['prefixlen']}" for a in l.get("addr_info", [])]))
+    online, nsrv = [], {"wg": [0, 0], "ovpn": [0, 0]}
+    for kind in ("wg", "ovpn"):
+        for s in d[kind]:
+            nsrv[kind][0] += 1; nsrv[kind][1] += int(active(s))
+            cl, seen = clients_state(kind, s)
+            if seen: remember(kind, s["id"], seen)
+            for c in cl:
+                if c["online"]:
+                    online.append(dict(name=c["name"], server=s["name"], kind=kind, sid=s["id"], ip=c["ip"], ep=c["ep"],
+                                       rx=c["rx"], tx=c["tx"], ago=int(time.time() - c["hs"]) if c["hs"] else None))
+    return jsonify(hostname=os.uname().nodename, os=os_name, kernel=os.uname().release,
+                   uptime=int(float(open("/proc/uptime").read().split()[0])), load=os.getloadavg(), cpu=cpu_pct(),
+                   cores=os.cpu_count(), mem=dict(total=total, used=total - mi.get("MemAvailable", 0)),
+                   disk=dict(total=du.total, used=du.used), gateway=r.get("gateway", ""), wan=r.get("dev", ""),
+                   ifaces=ifs, servers=nsrv, forwards=sum(1 for f in d["forwards"] if f["enabled"]), clients=online)
+
+# ------------------------------------------------------------- usuarios
+def chkpw(p):
+    p = str(p or "")
+    if len(p) < 8: raise Bad("La contraseña debe tener al menos 8 caracteres")
+    return p
+
+@app.get("/api/users")
+@auth
+def u_list(): return jsonify(users=sorted(users()), me=session["u"])
+
+@app.post("/api/users")
+@auth
+def u_add():
+    j = request.get_json(force=True); name = str(j.get("username", "")).strip()
+    if not UNAME.match(name): raise Bad("Usuario no válido: 3-32 caracteres (letras, números, . _ -)")
+    with LOCK:
+        us = users()
+        if name in us: raise Bad("Ese usuario ya existe")
+        us[name] = generate_password_hash(chkpw(j.get("password"))); save_users(us)
+    return jsonify(ok=True)
+
+@app.put("/api/users/<name>/password")
+@auth
+def u_pw(name):
+    j = request.get_json(force=True)
+    with LOCK:
+        us = users()
+        if name not in us: raise Bad("Usuario no encontrado")
+        me_ = name == session["u"]
+        if me_ and not check_password_hash(us[name], str(j.get("current", ""))): raise Bad("La contraseña actual no es correcta")
+        us[name] = generate_password_hash(chkpw(j.get("password"))); save_users(us)
+        if me_: session["f"] = fp(us[name])  # mantiene abierta esta sesión; las demás de ese usuario se cierran
+    return jsonify(ok=True)
+
+@app.delete("/api/users/<name>")
+@auth
+def u_del(name):
+    if name == session["u"]: raise Bad("No puedes eliminar tu propio usuario")
+    with LOCK:
+        us = users()
+        if name not in us: raise Bad("Usuario no encontrado")
+        del us[name]; save_users(us)
+    return jsonify(ok=True)
+
 # ------------------------------------------------------------ sesión y UI
 FAILS = {}
 
@@ -566,9 +680,10 @@ def login():
     ip = request.remote_addr; n, t = FAILS.get(ip, (0, 0))
     if n >= 5 and time.time() - t < 60: return err("Demasiados intentos. Espera un minuto.", 429)
     j = request.get_json(force=True, silent=True) or {}
-    if hmac.compare_digest(str(j.get("user", "")), cfg["user"]) and check_password_hash(cfg["hash"], str(j.get("password", ""))):
-        FAILS.pop(ip, None); session.permanent = True; session["u"] = cfg["user"]
-        return jsonify(ok=True)
+    name = str(j.get("user", "")); h = users().get(name)
+    if check_password_hash(h or DUMMY, str(j.get("password", ""))) and h:
+        FAILS.pop(ip, None); session.permanent = True; session["u"] = name; session["f"] = fp(h)
+        return jsonify(ok=True, user=name)
     FAILS[ip] = (n + 1, time.time())
     return err("Usuario o contraseña incorrectos", 401)
 
@@ -577,7 +692,9 @@ def logout():
     session.clear(); return jsonify(ok=True)
 
 @app.get("/api/me")
-def me(): return jsonify(user=session.get("u"))
+def me():
+    u, us = session.get("u"), users()
+    return jsonify(user=u if u in us and session.get("f") == fp(us[u]) else None)
 
 @app.get("/")
 def index(): return send_from_directory(app.static_folder, "index.html")
