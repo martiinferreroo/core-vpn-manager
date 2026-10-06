@@ -78,21 +78,27 @@ async function server(kind, id) {
     <div class="panel mono dim">${esc(s.proto)}/${s.port} &nbsp; ${esc(s.subnet)} &nbsp; ${esc(s.endpoint)} &nbsp; ${esc(s.iface)}${s.pub ? "<br>Clave pública: " + esc(s.pub) : ""}</div>
     <div class="top"><h3>Clientes</h3><button class="primary" id="addc">Añadir cliente</button></div>
     <div class="panel">${s.clients.length ? `<table><tr><th>Nombre</th><th>IP</th><th>Redes que enruta</th><th>Conexión</th><th>Tráfico ↓ / ↑</th><th></th></tr>
-    ${s.clients.map(c => `<tr><td>${esc(c.name)}</td><td class="mono">${esc(c.ip || "dinámica")}</td>
+    ${s.clients.map(c => `<tr><td>${esc(c.name)}</td><td class="mono">${c.ip ? esc(c.ip) + (kind === "ovpn" && !c.online ? ' <span class="dim">(última)</span>' : "") : '<span class="dim">dinámica</span>'}</td>
       <td class="mono">${esc(c.subnets.join(", ") || "-")}</td>
       <td><span class="pill ${c.online ? "ok" : ""}">${c.online ? "Conectado" : "Sin conexión"}</span> <span class="mono dim">${esc(c.ep || "")}</span></td>
       <td class="mono">${bytes(c.rx)} / ${bytes(c.tx)}</td>
       <td class="act"><a href="/api/servers/${kind}/${id}/clients/${c.id}/config"><button class="sm">Configuración</button></a>
       ${kind === "wg" ? `<button class="sm" data-qr="${c.id}">QR</button>` : ""}
-      <button class="sm danger" data-d="${c.id}">Eliminar</button></td></tr>`).join("")}</table>`
+      <button class="sm" data-e="${c.id}">Editar</button> <button class="sm danger" data-d="${c.id}">Eliminar</button></td></tr>`).join("")}</table>`
       : `<p class="empty">Este servidor aún no tiene clientes.</p>`}</div>`;
   $("#del").onclick = guard(async () => { if (!confirm(`¿Eliminar el servidor «${s.name}» y todos sus clientes?`)) return;
     await api(`/servers/${kind}/${id}`, {method: "DELETE"}); location.hash = "#/" + kind; });
-  $("#addc").onclick = () => formModal("Añadir cliente", [
-    {k: "name", label: "Nombre del cliente", ph: "Router sucursal"},
-    {k: "subnets", label: "Subredes que enruta este cliente (opcional)", type: "textarea", ph: "192.168.50.0/24",
+  const clientFields = (c = {}) => [
+    {k: "name", label: "Nombre del cliente", val: c.name, ph: "Móvil de Ana"},
+    ...(kind === "wg" ? [{k: "ip", label: "IP en la red WireGuard", val: c.id ? c.ip : "", ph: "Automática",
+      hint: c.id ? "Si la cambias, hay que volver a descargar la configuración en el dispositivo" : `Dentro de ${s.subnet}. Vacía para asignar una libre`}] : []),
+    {k: "subnets", label: "Subredes que enruta este cliente (opcional)", type: "textarea", val: (c.subnets || []).join(", "), ph: "192.168.50.0/24",
      hint: "Para clientes que son un router. Se añaden solas a la tabla de rutas del servidor."},
-  ], async o => { await api(`/servers/${kind}/${id}/clients`, {method: "POST", body: o}); toast("Cliente añadido"); route(); });
+  ];
+  $("#addc").onclick = () => formModal("Añadir cliente", clientFields(),
+    async o => { await api(`/servers/${kind}/${id}/clients`, {method: "POST", body: o}); toast("Cliente añadido"); route(); });
+  view.querySelectorAll("[data-e]").forEach(b => b.onclick = () => { const c = s.clients.find(x => x.id == b.dataset.e);
+    formModal("Editar cliente", clientFields(c), async o => { await api(`/servers/${kind}/${id}/clients/${c.id}`, {method: "PUT", body: o}); toast("Cliente actualizado"); route(); }); });
   view.querySelectorAll("[data-d]").forEach(b => b.onclick = guard(async () => { if (!confirm("¿Eliminar este cliente?")) return;
     await api(`/servers/${kind}/${id}/clients/${b.dataset.d}`, {method: "DELETE"}); toast("Cliente eliminado"); route(); }));
   view.querySelectorAll("[data-qr]").forEach(b => b.onclick = () => {

@@ -23,7 +23,7 @@ printf '\n%s== Core VPN Manager ==%s\nGestiona servidores WireGuard y OpenVPN, r
 while true; do
   PORT=$(ask "Puerto de la interfaz web" 8080)
   if ! [[ $PORT =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then say "${Y}Puerto no válido.${N}"; continue; fi
-  if ss -ltn | awk '{print $4}' | grep -qE "[:.]${PORT}$" && ! systemctl is-active --quiet core-vpn-manager; then
+  if [[ -n "$(ss -H -ltn "sport = :$PORT")" ]] && ! systemctl is-active --quiet core-vpn-manager; then
     say "${Y}El puerto $PORT ya está en uso.${N}"; continue; fi
   break
 done
@@ -103,6 +103,23 @@ systemctl enable core-vpn-manager >/dev/null 2>&1
 systemctl restart core-vpn-manager
 
 # ---- 4. Opcionales (Docker) ----
+# Libera el puerto 53 (systemd-resolved lo ocupa con su "stub" en 127.0.0.53)
+free_port53() {
+  if systemctl is-active --quiet systemd-resolved; then
+    say "     Desactivando el stub DNS de systemd-resolved (puerto 53)..."
+    mkdir -p /etc/systemd/resolved.conf.d
+    printf '[Resolve]\nDNS=1.1.1.1 9.9.9.9\nDNSStubListener=no\n' > /etc/systemd/resolved.conf.d/adguardhome.conf
+    ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+    systemctl restart systemd-resolved
+    sleep 1
+  fi
+  local busy; busy=$(ss -H -lntup 'sport = :53' 2>/dev/null || true)
+  if [[ -n "$busy" ]]; then
+    say "${Y}El puerto 53 sigue ocupado por:${N}"; say "$busy"
+    yn "     ¿Intentar instalar AdGuard Home de todas formas?" || return 1
+  fi
+}
+
 need_docker() {
   command -v docker >/dev/null || { say "  Instalando Docker..."; curl -fsSL https://get.docker.com | sh; }
   systemctl enable --now docker >/dev/null 2>&1 || true
@@ -136,13 +153,7 @@ fi
 
 if (( WANT_ADG )); then
   say "  -> AdGuard Home"
-  if (ss -lnu; ss -lnt) | grep -q ':53 ' && systemctl is-active --quiet systemd-resolved; then
-    say "     El puerto 53 lo usa systemd-resolved: desactivando su stub DNS."
-    mkdir -p /etc/systemd/resolved.conf.d
-    printf '[Resolve]\nDNS=1.1.1.1\nDNSStubListener=no\n' > /etc/systemd/resolved.conf.d/adguardhome.conf
-    ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-    systemctl restart systemd-resolved
-  fi
+  if free_port53; then
   stack adguard-home <<'EOF'
 services:
   adguardhome:
@@ -157,6 +168,9 @@ services:
       - ./work:/opt/adguardhome/work
       - ./conf:/opt/adguardhome/conf
 EOF
+  else
+    WANT_ADG=0; say "     AdGuard Home omitido."
+  fi
 fi
 
 if (( WANT_KUMA )); then

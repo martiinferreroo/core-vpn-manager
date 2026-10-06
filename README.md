@@ -4,8 +4,8 @@ Pequeña utilidad para servidores Linux con panel web para gestionar **servidore
 
 ## Características
 
-- **WireGuard**: crea servidores (puerto, rango de IPs, DNS, NAT, túnel completo), añade clientes, descarga `.conf` o escanea el **código QR**. Los clientes pueden ser routers que enrutan subredes: se añaden automáticamente a `AllowedIPs` y a la tabla de rutas.
-- **OpenVPN**: servidores UDP o TCP con PKI propia (EC P-256, `tls-crypt`), clientes con `.ovpn` en un solo archivo, subredes detrás de un cliente (`iroute`) con su ruta añadida automáticamente.
+- **WireGuard**: crea servidores (puerto, rango de IPs, DNS, NAT, túnel completo), añade clientes con **IP fija** (editable después desde el panel de edición del cliente), descarga `.conf` o escanea el **código QR**. Los clientes pueden ser routers que enrutan subredes: se añaden automáticamente a `AllowedIPs` y a la tabla de rutas.
+- **OpenVPN**: servidores UDP o TCP con PKI propia (EC P-256, `tls-crypt`), clientes con `.ovpn` en un solo archivo, IP dinámica estable (se muestra la asignada), subredes detrás de un cliente (`iroute`) con su ruta añadida automáticamente.
 - **Estadísticas**: tráfico total del servidor, tráfico por cliente y estado de conexión.
 - **Redirección de puertos** al estilo router: puerto externo, interno, IP interna, protocolo (TCP, UDP o ambos) y descripción. Se puede activar y desactivar cada regla.
 - **Rutas**: ver, añadir y eliminar rutas del sistema. Las rutas añadidas desde el panel se restauran al reiniciar.

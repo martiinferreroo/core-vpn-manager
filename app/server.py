@@ -178,6 +178,14 @@ def free_ip(s):
         if str(h) not in used: return str(h)
     raise Bad("No quedan IPs libres en el rango del servidor")
 
+def chk_wg_ip(s, ip, ignore=None):
+    ip = chkip(ip); a = ipaddress.IPv4Address(ip); n = ipaddress.ip_network(s["subnet"])
+    if a not in n or a in (n.network_address, n.broadcast_address): raise Bad(f"{ip} no está dentro del rango {s['subnet']}")
+    if ip == s["address"].split("/")[0]: raise Bad(f"{ip} es la IP del propio servidor")
+    for c in s["clients"]:
+        if c is not ignore and c["ip"] == ip: raise Bad(f"{ip} ya la usa «{c['name']}»")
+    return ip
+
 # ------------------------------------------------------------------- OpenVPN
 def issue(dirp, cn, server=False):
     key, csr, crt = (f"{dirp}/{cn}.{x}" for x in ("key", "csr", "crt"))
@@ -206,7 +214,8 @@ def ovpn_write(s):
          f"server {mask(IPN(s['subnet']))}", f"ca {dirp}/ca.crt", f"cert {dirp}/server.crt", f"key {dirp}/server.key",
          "dh none", "ecdh-curve prime256v1", f"tls-crypt {dirp}/tc.key", "data-ciphers AES-256-GCM:AES-128-GCM",
          "auth SHA256", "keepalive 10 120", "persist-key", "persist-tun", f"client-config-dir {dirp}/ccd",
-         f"status /run/cvm-ovpn{s['id']}.status 10", "verb 3"]
+         f"status /run/cvm-ovpn{s['id']}.status 10", "status-version 2",
+         f"ifconfig-pool-persist {dirp}/ipp.txt", "verb 3"]
     if s["dns"]: L.append(f'push "dhcp-option DNS {s["dns"]}"')
     if s["full_tunnel"]: L.append('push "redirect-gateway def1"')
     for r in s["push_routes"]: L.append(f'push "route {mask(IPN(r))}"')
@@ -236,15 +245,19 @@ def ovpn_client_conf(s, c):
                       "<key>", rd(c["cn"] + ".key"), "</key>", "<tls-crypt>", rd("tc.key"), "</tls-crypt>"]) + "\n"
 
 def ovpn_status(s):
-    out, on = {}, False
+    """Lee el fichero de estado (status-version 2). Devuelve {CN: {ep, ip, rx, tx}}."""
+    out, cols = {}, None
     try: lines = open(f"/run/cvm-ovpn{s['id']}.status").read().splitlines()
     except OSError: return out
     for l in lines:
-        if l.startswith("Common Name,"): on = True; continue
-        if l.startswith("ROUTING TABLE"): break
-        if on:
-            f = l.split(",")
-            if len(f) >= 5: out[f[0]] = {"ep": f[1], "rx": int(f[2]), "tx": int(f[3])}
+        f = l.split(",")
+        if f[0] == "HEADER" and len(f) > 2 and f[1] == "CLIENT_LIST": cols = f[2:]
+        elif f[0] == "CLIENT_LIST" and cols:
+            r = dict(zip(cols, f[1:]))
+            try:
+                out[r["Common Name"]] = {"ep": r.get("Real Address", ""), "ip": r.get("Virtual Address", ""),
+                                         "rx": int(r.get("Bytes Received", 0)), "tx": int(r.get("Bytes Sent", 0))}
+            except (KeyError, ValueError): pass
     return out
 
 # --------------------------------------------------------- servidores (común)
@@ -308,12 +321,22 @@ def srv_get(kind, sid):
     kind_ok(kind); s = find(load(), kind, sid)
     rx, tx = iface_bytes(s["iface"])
     st = wg_peers(s["iface"]) if kind == "wg" else ovpn_status(s)
-    cl = []
+    cl, seen = [], {}
     for c in s["clients"]:
         x = st.get(c["pub"] if kind == "wg" else c["cn"], {})
-        on = (time.time() - x.get("hs", 0) < 180) if kind == "wg" else bool(x)
-        cl.append(dict({k: v for k, v in c.items() if k not in ("priv", "psk")}, online=on if x else False,
+        if kind == "wg":
+            on, ip = bool(x) and time.time() - x["hs"] < 180, c["ip"]
+        else:
+            on, ip = bool(x), x.get("ip") or c.get("last_ip", "")
+            if x.get("ip") and x["ip"] != c.get("last_ip"): seen[c["id"]] = x["ip"]
+        cl.append(dict({k: v for k, v in c.items() if k not in ("priv", "psk")}, online=on, ip=ip,
                        rx=x.get("rx", 0), tx=x.get("tx", 0), ep=x.get("ep", "")))
+    if seen:  # recuerda la última IP que tuvo cada cliente OpenVPN
+        with LOCK:
+            d = load()
+            for c in find(d, kind, sid)["clients"]:
+                if c["id"] in seen: c["last_ip"] = seen[c["id"]]
+            save(d)
     return jsonify(dict(pub(s), active=active(s), rx=rx, tx=tx, clients=cl))
 
 @app.delete("/api/servers/<kind>/<int:sid>")
@@ -346,7 +369,8 @@ def cl_add(kind, sid):
         c = dict(id=cid, name=clean(j.get("name")) or f"cliente-{cid}", subnets=subs)
         if kind == "wg":
             priv = sh(["wg", "genkey"])
-            c.update(priv=priv, pub=sh(["wg", "pubkey"], inp=priv), psk=sh(["wg", "genpsk"]), ip=free_ip(s))
+            c.update(priv=priv, pub=sh(["wg", "pubkey"], inp=priv), psk=sh(["wg", "genpsk"]),
+                     ip=chk_wg_ip(s, j.get("ip")) if str(j.get("ip") or "").strip() else free_ip(s))
         else:
             c["cn"] = f"c{cid}"; issue(f"{OVPN_DIR}/cvm{sid}", c["cn"])
         s["clients"].append(c); apply_server(kind, s, d); save(d)
@@ -360,6 +384,23 @@ def cl_del(kind, sid, cid):
         d = load(); s = find(d, kind, sid); c = find_client(s, cid)
         s["clients"].remove(c); kernel_routes(s, remove=[c]); apply_server(kind, s, d)
         if kind == "ovpn": wfile(f"{OVPN_DIR}/cvm{sid}/ccd/{c['cn']}", "disable\n", 0o644)  # revoca el acceso
+        save(d)
+    return jsonify(ok=True)
+
+@app.put("/api/servers/<kind>/<int:sid>/clients/<int:cid>")
+@auth
+def cl_edit(kind, sid, cid):
+    kind_ok(kind); j = request.get_json(force=True)
+    with LOCK:
+        d = load(); s = find(d, kind, sid); c = find_client(s, cid)
+        subs = nets(j.get("subnets")) if "subnets" in j else c["subnets"]
+        for x in subs:
+            if IPN(x).overlaps(IPN(s["subnet"])): raise Bad(f"{x} se solapa con el rango del servidor")
+        old = list(c["subnets"])
+        if kind == "wg" and str(j.get("ip") or "").strip(): c["ip"] = chk_wg_ip(s, j["ip"], ignore=c)
+        c["name"], c["subnets"] = clean(j.get("name")) or c["name"], subs
+        apply_server(kind, s, d)
+        kernel_routes(s, remove=[{"subnets": [x for x in old if x not in subs]}])
         save(d)
     return jsonify(ok=True)
 
@@ -507,6 +548,9 @@ def boot():
         try: run(["ip", "route", "replace", *route_args(r)])
         except Exception: pass
     for s in d["wg"] + d["ovpn"]: kernel_routes(s)
+    for s in d["ovpn"]:
+        try: ovpn_write(s)
+        except Exception as e: print("ovpn:", e)
 
 if __name__ == "__main__":
     boot()
