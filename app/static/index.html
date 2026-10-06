@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Core VPN Manager</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230e7c86'/><circle cx='16' cy='16' r='5' fill='none' stroke='white' stroke-width='3'/></svg>">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<section id="login" hidden>
+  <form id="loginForm">
+    <h1>Core VPN Manager</h1>
+    <p class="dim">Inicia sesión para administrar este servidor.</p>
+    <label>Usuario<input name="user" autocomplete="username" required autofocus></label>
+    <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
+    <div class="err" id="loginErr"></div>
+    <button class="primary">Entrar</button>
+  </form>
+</section>
+<div id="app" hidden>
+  <aside>
+    <div class="brand">Core VPN<br>Manager</div>
+    <nav>
+      <a href="#/wg" data-p="wg">WireGuard</a>
+      <a href="#/ovpn" data-p="ovpn">OpenVPN</a>
+      <a href="#/fwd" data-p="fwd">Redirección de puertos</a>
+      <a href="#/routes" data-p="routes">Rutas</a>
+    </nav>
+    <button class="ghost" id="logout">Cerrar sesión</button>
+  </aside>
+  <main id="view"></main>
+</div>
+<div id="toast" role="status"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
