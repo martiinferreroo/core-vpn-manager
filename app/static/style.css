@@ -35,6 +35,7 @@ td.act{text-align:right;white-space:nowrap}
 .pill{font-size:.78rem;padding:.1rem .55rem;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
 .pill.ok{color:var(--ok);border-color:var(--ok)}
 .pill.vpn{color:var(--accent);border-color:var(--accent)}
+.warn{border-color:var(--bad)}.warn ul{margin:.4rem 0}
 .empty{color:var(--dim);padding:2rem 0}
 button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:.45rem .9rem}
 button:hover{border-color:var(--accent)}

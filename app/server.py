@@ -131,6 +131,33 @@ def fw(d):
             ipt("-t", "filter", "-A", "CVM_FWD", "-p", p, "-d", f["int_ip"], "--dport", str(f["int_port"]), "-j", "ACCEPT")
             ipt("-t", "nat", "-A", "CVM_NAT", "-p", p, "-d", f["int_ip"], "--dport", str(f["int_port"]), "-j", "MASQUERADE")
 
+def checks(s=None):
+    """Comprueba lo necesario para que los clientes salgan a Internet."""
+    ok = lambda *a: run(["iptables", "-w", *a]).returncode == 0
+    try: fwd = open("/proc/sys/net/ipv4/ip_forward").read().strip() == "1"
+    except OSError: fwd = False
+    out = [("Reenvío de paquetes activado (ip_forward)", fwd)]
+    for t, parent, chain in (("filter", "FORWARD", "CVM_FWD"), ("nat", "PREROUTING", "CVM_DNAT"), ("nat", "POSTROUTING", "CVM_NAT")):
+        out.append((f"Cadena {chain} enlazada en {parent}", ok("-t", t, "-C", parent, "-j", chain)))
+    if s:
+        i = s["iface"]
+        out.append((f"Reenvío permitido para {i}", ok("-t", "filter", "-C", "CVM_FWD", "-i", i, "-j", "ACCEPT")))
+        if s.get("nat"):
+            out.append(("NAT (MASQUERADE) hacia Internet", ok("-t", "nat", "-C", "CVM_NAT", "-s", s["subnet"], "!", "-o", i, "-j", "MASQUERADE")))
+    return out
+
+def watchdog():
+    """Si otro programa (ufw, netfilter-persistent, Docker...) borra nuestras reglas, las restaura."""
+    while True:
+        time.sleep(30)
+        try:
+            with LOCK:
+                d = load()
+                if not all(o for _, o in checks()) or any(not all(o for _, o in checks(s)) for s in d["wg"] + d["ovpn"]):
+                    with open("/proc/sys/net/ipv4/ip_forward", "w") as f: f.write("1")
+                    fw(d); print("watchdog: reglas restauradas")
+        except Exception as e: print("watchdog:", e)
+
 def kernel_routes(s, remove=None):
     for c in (remove or s["clients"]):
         for n in c["subnets"]:
@@ -157,8 +184,9 @@ def wg_client_conf(s, c):
     allowed = ["0.0.0.0/0"] if s["full_tunnel"] else [s["subnet"]] + s["push_routes"]
     for o in s["clients"]:
         if o is not c: allowed += o["subnets"]
-    L = ["[Interface]", f"PrivateKey = {c['priv']}", f"Address = {c['ip']}/32"]
-    if s["dns"]: L.append(f"DNS = {s['dns']}")
+    L = ["[Interface]", f"PrivateKey = {c['priv']}", f"Address = {c['ip']}/32", "MTU = 1380"]
+    dns = s["dns"] or ("1.1.1.1, 9.9.9.9" if s["full_tunnel"] else "")
+    if dns: L.append(f"DNS = {dns}")
     L += ["", "[Peer]", f"PublicKey = {s['pub']}", f"PresharedKey = {c['psk']}",
           f"Endpoint = {s['endpoint']}:{s['port']}", f"AllowedIPs = {', '.join(dict.fromkeys(allowed))}",
           "PersistentKeepalive = 25", ""]
@@ -216,7 +244,8 @@ def ovpn_write(s):
          "auth SHA256", "keepalive 10 120", "persist-key", "persist-tun", f"client-config-dir {dirp}/ccd",
          f"status /run/cvm-ovpn{s['id']}.status 10", "status-version 2",
          f"ifconfig-pool-persist {dirp}/ipp.txt", "verb 3"]
-    if s["dns"]: L.append(f'push "dhcp-option DNS {s["dns"]}"')
+    dns = s["dns"] or ("1.1.1.1" if s["full_tunnel"] else "")
+    if dns: L.append(f'push "dhcp-option DNS {dns}"')
     if s["full_tunnel"]: L.append('push "redirect-gateway def1"')
     for r in s["push_routes"]: L.append(f'push "route {mask(IPN(r))}"')
     for c in s["clients"]:
@@ -337,7 +366,22 @@ def srv_get(kind, sid):
             for c in find(d, kind, sid)["clients"]:
                 if c["id"] in seen: c["last_ip"] = seen[c["id"]]
             save(d)
-    return jsonify(dict(pub(s), active=active(s), rx=rx, tx=tx, clients=cl))
+    return jsonify(dict(pub(s), active=active(s), rx=rx, tx=tx, clients=cl,
+                        checks=[{"name": n, "ok": o} for n, o in checks(s)]))
+
+@app.put("/api/servers/<kind>/<int:sid>")
+@auth
+def srv_edit(kind, sid):
+    kind_ok(kind); j = request.get_json(force=True)
+    with LOCK:
+        d = load(); s = find(d, kind, sid)
+        s.update(name=clean(j.get("name")) or s["name"], endpoint=clean(j.get("endpoint"), 100) or s["endpoint"],
+                 dns=chkip(j["dns"]) if j.get("dns") else "", push_routes=nets(j.get("push_routes")),
+                 full_tunnel=bool(j.get("full_tunnel")), nat=bool(j.get("nat")))
+        if kind == "ovpn":
+            ovpn_write(s); run(["systemctl", "restart", f"openvpn-server@cvm{sid}"])
+        fw(d); save(d)
+    return jsonify(ok=True)
 
 @app.delete("/api/servers/<kind>/<int:sid>")
 @auth
@@ -554,5 +598,6 @@ def boot():
 
 if __name__ == "__main__":
     boot()
+    threading.Thread(target=watchdog, daemon=True).start()
     from waitress import serve
     serve(app, host=cfg.get("host", "0.0.0.0"), port=int(cfg["port"]), threads=8)

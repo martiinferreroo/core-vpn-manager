@@ -42,6 +42,12 @@ Para desinstalar: `sudo ./uninstall.sh`.
 
 Las cadenas `CVM_*` se reconstruyen en cada cambio y al arrancar el servicio, sin tocar el resto de tus reglas. Si usas `nftables` puro u otro firewall con política restrictiva, abre los puertos de las VPN.
 
+## Si los clientes se conectan pero no navegan
+
+1. Edita el servidor y marca **Enviar todo el tráfico de los clientes por la VPN** y **NAT**; después vuelve a descargar la configuración (o el QR) en el dispositivo.
+2. Mira el recuadro «Problemas de red» en la página del servidor: indica si falta `ip_forward`, el NAT o el reenvío. El panel intenta repararlo cada 30 s.
+3. Con **firewalld** (RHEL/Fedora) añade la interfaz `wgN` a una zona con masquerade: `firewall-cmd --permanent --zone=public --add-masquerade --add-interface=wg1 && firewall-cmd --reload`.
+
 ## Seguridad
 
 - El panel se ejecuta como **root** (necesita gestionar red y VPN). No lo expongas sin protección: publícalo detrás de HTTPS (por ejemplo con Nginx Proxy Manager) o limita el acceso por firewall/VPN.

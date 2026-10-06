@@ -60,7 +60,7 @@ async function servers(kind) {
     {k: "endpoint", label: "IP pública o dominio del servidor", val: location.hostname, hint: "Es la dirección a la que se conectarán los clientes"},
     {k: "dns", label: "DNS para los clientes (opcional)", ph: "1.1.1.1"},
     {k: "push_routes", label: "Redes accesibles por los clientes (opcional)", type: "textarea", ph: "192.168.1.0/24, 10.0.5.0/24", hint: "Separadas por comas"},
-    {k: "full_tunnel", label: "Enviar todo el tráfico de los clientes por la VPN", type: "checkbox"},
+    {k: "full_tunnel", label: "Enviar todo el tráfico de los clientes por la VPN", type: "checkbox", hint: "Necesario para que naveguen por Internet a través del servidor"},
     {k: "nat", label: "Dar salida a Internet a los clientes (NAT)", type: "checkbox", val: true},
   ], async o => { await api("/servers/" + kind, {method: "POST", body: o}); toast("Servidor creado"); route(); }, "Crear servidor");
 }
@@ -69,12 +69,14 @@ async function server(kind, id) {
   const s = await api(`/servers/${kind}/${id}`);
   const online = s.clients.filter(c => c.online).length;
   view.innerHTML = `<div class="crumb"><a href="#/${kind}">${NAMES[kind]}</a> / ${esc(s.name)}</div>
-    <div class="top"><h1>${esc(s.name)}</h1><button class="danger" id="del">Eliminar servidor</button></div>
+    <div class="top"><h1>${esc(s.name)}</h1><span><button id="edit">Editar servidor</button> <button class="danger" id="del">Eliminar servidor</button></span></div>
     <div class="stats">
       <div class="panel stat"><span class="dim">Estado</span><b>${s.active ? "Activo" : "Parado"}</b></div>
       <div class="panel stat"><span class="dim">Recibido</span><b>${bytes(s.rx)}</b></div>
       <div class="panel stat"><span class="dim">Enviado</span><b>${bytes(s.tx)}</b></div>
       <div class="panel stat"><span class="dim">Conectados</span><b>${online} / ${s.clients.length}</b></div></div>
+    ${s.checks.some(c => !c.ok) ? `<div class="panel warn"><b>Problemas de red en el servidor</b><ul>${s.checks.filter(c => !c.ok).map(c => `<li>${esc(c.name)}</li>`).join("")}</ul>
+      <span class="dim">El panel intenta repararlo cada 30 segundos. Si persiste, revisa que otro firewall (firewalld, nftables) no bloquee el reenvío.</span></div>` : ""}
     <div class="panel mono dim">${esc(s.proto)}/${s.port} &nbsp; ${esc(s.subnet)} &nbsp; ${esc(s.endpoint)} &nbsp; ${esc(s.iface)}${s.pub ? "<br>Clave pública: " + esc(s.pub) : ""}</div>
     <div class="top"><h3>Clientes</h3><button class="primary" id="addc">Añadir cliente</button></div>
     <div class="panel">${s.clients.length ? `<table><tr><th>Nombre</th><th>IP</th><th>Redes que enruta</th><th>Conexión</th><th>Tráfico ↓ / ↑</th><th></th></tr>
@@ -88,6 +90,15 @@ async function server(kind, id) {
       : `<p class="empty">Este servidor aún no tiene clientes.</p>`}</div>`;
   $("#del").onclick = guard(async () => { if (!confirm(`¿Eliminar el servidor «${s.name}» y todos sus clientes?`)) return;
     await api(`/servers/${kind}/${id}`, {method: "DELETE"}); location.hash = "#/" + kind; });
+  $("#edit").onclick = () => formModal("Editar servidor", [
+    {k: "name", label: "Nombre descriptivo", val: s.name},
+    {k: "endpoint", label: "IP pública o dominio del servidor", val: s.endpoint},
+    {k: "dns", label: "DNS para los clientes (opcional)", val: s.dns, ph: "1.1.1.1"},
+    {k: "push_routes", label: "Redes accesibles por los clientes (opcional)", type: "textarea", val: s.push_routes.join(", "), ph: "192.168.1.0/24"},
+    {k: "full_tunnel", label: "Enviar todo el tráfico de los clientes por la VPN", type: "checkbox", val: s.full_tunnel, hint: "Necesario para que naveguen por Internet a través del servidor"},
+    {k: "nat", label: "Dar salida a Internet a los clientes (NAT)", type: "checkbox", val: s.nat},
+  ], async o => { await api(`/servers/${kind}/${id}`, {method: "PUT", body: o});
+    toast("Servidor actualizado. Descarga de nuevo la configuración de los clientes."); route(); });
   const clientFields = (c = {}) => [
     {k: "name", label: "Nombre del cliente", val: c.name, ph: "Móvil de Ana"},
     ...(kind === "wg" ? [{k: "ip", label: "IP en la red WireGuard", val: c.id ? c.ip : "", ph: "Automática",
