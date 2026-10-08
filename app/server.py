@@ -139,6 +139,8 @@ def fw(d):
         ipt("-t", "filter", "-A", "CVM_FWD", "-i", i, "-j", "ACCEPT")
         ipt("-t", "filter", "-A", "CVM_FWD", "-o", i, "-j", "ACCEPT")
         if s.get("nat"):
+            for br in ("docker0", "br-+"):  # el tráfico hacia contenedores Docker conserva la IP real del cliente
+                ipt("-t", "nat", "-A", "CVM_NAT", "-s", s["subnet"], "-o", br, "-j", "RETURN")
             ipt("-t", "nat", "-A", "CVM_NAT", "-s", s["subnet"], "!", "-o", i, "-j", "MASQUERADE")
     for f in d["forwards"]:
         if not f["enabled"]: continue

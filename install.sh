@@ -145,10 +145,7 @@ services:
     image: jc21/nginx-proxy-manager:latest
     container_name: nginx-proxy-manager
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "81:81"
-      - "443:443"
+    network_mode: host   # sin NAT de Docker: se ve la IP real de los clientes
     volumes:
       - ./data:/data
       - ./letsencrypt:/etc/letsencrypt
@@ -164,10 +161,7 @@ services:
     image: adguard/adguardhome:latest
     container_name: adguardhome
     restart: unless-stopped
-    ports:
-      - "53:53/tcp"
-      - "53:53/udp"
-      - "3000:3000/tcp"
+    network_mode: host   # sin NAT de Docker: se ve la IP real de los clientes
     volumes:
       - ./work:/opt/adguardhome/work
       - ./conf:/opt/adguardhome/conf
@@ -197,6 +191,6 @@ IP=$(hostname -I 2>/dev/null | awk '{print $1}'); IP=${IP:-IP-DEL-SERVIDOR}
 printf '\n%s¡Instalación completada!%s\n' "$G" "$N"
 say "  Core VPN Manager : http://$IP:$PORT   (usuario: $USER_NAME)"
 (( WANT_NPM ))  && say "  Nginx Proxy Mgr  : http://$IP:81      (acceso inicial: admin@example.com / changeme)"
-(( WANT_ADG ))  && say "  AdGuard Home     : http://$IP:3000    (en el asistente deja el puerto web en 3000)"
+(( WANT_ADG ))  && say "  AdGuard Home     : http://$IP:3000    (en el asistente pon el puerto web en 3000, NO en 80: lo usa Nginx Proxy Manager)"
 (( WANT_KUMA )) && say "  Uptime Kuma      : http://$IP:3001"
 say; say "Si usas un firewall (ufw, firewalld...) abre los puertos necesarios. Se recomienda publicar el panel con HTTPS mediante un proxy inverso."

@@ -44,6 +44,10 @@ Para desinstalar: `sudo ./uninstall.sh`.
 
 Las cadenas `CVM_*` se reconstruyen en cada cambio y al arrancar el servicio, sin tocar el resto de tus reglas. Si usas `nftables` puro u otro firewall con política restrictiva, abre los puertos de las VPN.
 
+## IP real de los clientes en Nginx Proxy Manager y AdGuard Home
+
+Ambos se instalan con `network_mode: host`, así que ven la IP verdadera del cliente (pública, de la VPN o de una subred tras un router) y no la del puente de Docker (`172.x.0.1`). Por eso escuchan directamente en los puertos del servidor: NPM en 80/81/443 y AdGuard en 53 y 3000 (en su asistente deja el puerto web en 3000). Si NPM debe llegar a otra aplicación, usa la IP del servidor y su puerto. Además, el NAT de las VPN no se aplica al tráfico que va a contenedores Docker.
+
 ## Si los clientes se conectan pero no navegan
 
 1. Edita el servidor y marca **Enviar todo el tráfico de los clientes por la VPN** y **NAT**; después vuelve a descargar la configuración (o el QR) en el dispositivo.
