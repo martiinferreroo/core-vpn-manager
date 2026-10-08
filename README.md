@@ -46,7 +46,7 @@ Las cadenas `CVM_*` se reconstruyen en cada cambio y al arrancar el servicio, si
 
 ## IP real de los clientes en Nginx Proxy Manager y AdGuard Home
 
-Ambos se instalan con `network_mode: host`, así que ven la IP verdadera del cliente (pública, de la VPN o de una subred tras un router) y no la del puente de Docker (`172.x.0.1`). Por eso escuchan directamente en los puertos del servidor: NPM en 80/81/443 y AdGuard en 53 y 3000 (en su asistente deja el puerto web en 3000). Si NPM debe llegar a otra aplicación, usa la IP del servidor y su puerto. Además, el NAT de las VPN no se aplica al tráfico que va a contenedores Docker.
+Ambos se instalan con `network_mode: host`, así que ven la IP verdadera del cliente (pública, de la VPN o de una subred tras un router) y no la del puente de Docker (`172.x.0.1`). Por eso escuchan directamente en los puertos del servidor: NPM en 80/81/443 y AdGuard en 53 y 3002 (interfaz web; en su asistente deja el puerto en 3002). **No uses el 3000 ni el 80 para AdGuard:** NPM los necesita (el 3000 es su API interna; si está ocupado, NPM se queda en «API is not ready»). Si NPM debe llegar a otra aplicación, usa la IP del servidor y su puerto. Además, el NAT de las VPN no se aplica al tráfico que va a contenedores Docker.
 
 ## Si los clientes se conectan pero no navegan
 

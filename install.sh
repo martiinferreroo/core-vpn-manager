@@ -39,7 +39,7 @@ done
 say; say "${B}Aplicaciones opcionales${N} (se instalan con Docker):"
 WANT_NPM=0; WANT_ADG=0; WANT_KUMA=0
 yn "  ¿Instalar Nginx Proxy Manager (proxy inverso + SSL, puertos 80/81/443)?" && WANT_NPM=1
-yn "  ¿Instalar AdGuard Home (bloqueo de anuncios y DNS, puertos 53/3000)?"     && WANT_ADG=1
+yn "  ¿Instalar AdGuard Home (bloqueo de anuncios y DNS, puertos 53/3002)?"     && WANT_ADG=1
 yn "  ¿Instalar Uptime Kuma (monitorización, puerto 3001)?"                       && WANT_KUMA=1
 
 say; say "${B}Resumen${N}: panel en el puerto $PORT, usuario '$USER_NAME'. Opcionales: NPM=$WANT_NPM AdGuard=$WANT_ADG Kuma=$WANT_KUMA"
@@ -162,6 +162,8 @@ services:
     container_name: adguardhome
     restart: unless-stopped
     network_mode: host   # sin NAT de Docker: se ve la IP real de los clientes
+    # Interfaz web en el 3002: el 3000 lo usa internamente Nginx Proxy Manager (si no, "API is not ready")
+    command: ["--no-check-update", "-c", "/opt/adguardhome/conf/AdGuardHome.yaml", "-w", "/opt/adguardhome/work", "--port", "3002"]
     volumes:
       - ./work:/opt/adguardhome/work
       - ./conf:/opt/adguardhome/conf
@@ -191,6 +193,6 @@ IP=$(hostname -I 2>/dev/null | awk '{print $1}'); IP=${IP:-IP-DEL-SERVIDOR}
 printf '\n%s¡Instalación completada!%s\n' "$G" "$N"
 say "  Core VPN Manager : http://$IP:$PORT   (usuario: $USER_NAME)"
 (( WANT_NPM ))  && say "  Nginx Proxy Mgr  : http://$IP:81      (acceso inicial: admin@example.com / changeme)"
-(( WANT_ADG ))  && say "  AdGuard Home     : http://$IP:3000    (en el asistente pon el puerto web en 3000, NO en 80: lo usa Nginx Proxy Manager)"
+(( WANT_ADG ))  && say "  AdGuard Home     : http://$IP:3002    (en el asistente deja el puerto web en 3002; ni 80 ni 3000, los usa Nginx Proxy Manager)"
 (( WANT_KUMA )) && say "  Uptime Kuma      : http://$IP:3001"
 say; say "Si usas un firewall (ufw, firewalld...) abre los puertos necesarios. Se recomienda publicar el panel con HTTPS mediante un proxy inverso."
