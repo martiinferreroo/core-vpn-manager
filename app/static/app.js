@@ -62,6 +62,8 @@ async function servers(kind) {
     {k: "push_routes", label: "Redes accesibles por los clientes (opcional)", type: "textarea", ph: "192.168.1.0/24, 10.0.5.0/24", hint: "Separadas por comas"},
     {k: "full_tunnel", label: "Enviar todo el tráfico de los clientes por la VPN", type: "checkbox", hint: "Necesario para que naveguen por Internet a través del servidor"},
     {k: "nat", label: "Dar salida a Internet a los clientes (NAT)", type: "checkbox", val: true},
+    ...(kind === "ovpn" ? [{k: "cross", label: "Dar acceso a las redes de los demás servidores VPN", type: "checkbox", val: true,
+      hint: "Los clientes recibirán rutas hacia WireGuard y las subredes de sus routers"}] : []),
   ], async o => { await api("/servers/" + kind, {method: "POST", body: o}); toast("Servidor creado"); route(); }, "Crear servidor");
 }
 
@@ -97,6 +99,8 @@ async function server(kind, id) {
     {k: "push_routes", label: "Redes accesibles por los clientes (opcional)", type: "textarea", val: s.push_routes.join(", "), ph: "192.168.1.0/24"},
     {k: "full_tunnel", label: "Enviar todo el tráfico de los clientes por la VPN", type: "checkbox", val: s.full_tunnel, hint: "Necesario para que naveguen por Internet a través del servidor"},
     {k: "nat", label: "Dar salida a Internet a los clientes (NAT)", type: "checkbox", val: s.nat},
+    ...(kind === "ovpn" ? [{k: "cross", label: "Dar acceso a las redes de los demás servidores VPN", type: "checkbox", val: s.cross !== false,
+      hint: "Los clientes reconectan para recibir las rutas nuevas"}] : []),
   ], async o => { await api(`/servers/${kind}/${id}`, {method: "PUT", body: o});
     toast("Servidor actualizado. Descarga de nuevo la configuración de los clientes."); route(); });
   const clientFields = (c = {}) => [

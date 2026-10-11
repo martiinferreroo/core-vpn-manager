@@ -181,11 +181,13 @@ def kernel_routes(s, remove=None):
     for c in (remove or s["clients"]):
         for n in c["subnets"]:
             if remove: run(["ip", "route", "del", n, "dev", s["iface"]])
-            else: run(["ip", "route", "replace", n, "dev", s["iface"]])
+            else: run(["ip", "route", "replace", n, *(["via", c["ip"]] if c.get("ip") else []), "dev", s["iface"]])
 
 # ----------------------------------------------------------------- WireGuard
 def wg_conf(s):
-    L = ["[Interface]", f"Address = {s['address']}", f"ListenPort = {s['port']}", f"PrivateKey = {s['priv']}", ""]
+    L = ["[Interface]", f"Address = {s['address']}", f"ListenPort = {s['port']}", f"PrivateKey = {s['priv']}"]
+    L += [f"PostUp = ip route replace {n} via {c['ip']} dev %i" for c in s["clients"] for n in c["subnets"]]
+    L.append("")
     for c in s["clients"]:
         allowed = ", ".join([f"{c['ip']}/32"] + c["subnets"])
         L += ["[Peer]", f"# {c['name']}", f"PublicKey = {c['pub']}", f"PresharedKey = {c['psk']}", f"AllowedIPs = {allowed}", ""]
@@ -255,7 +257,7 @@ def pki_init(dirp):
         sh(["openvpn", "--genkey", "--secret", f"{dirp}/tc.key"])
     issue(dirp, "server", server=True)
 
-def ovpn_write(s):
+def ovpn_write(s, d):
     dirp = f"{OVPN_DIR}/cvm{s['id']}"
     L = [f"port {s['port']}", f"proto {s['proto']}", f"dev {s['iface']}", "dev-type tun", "topology subnet",
          f"server {mask(IPN(s['subnet']))}", f"ca {dirp}/ca.crt", f"cert {dirp}/server.crt", f"key {dirp}/server.key",
@@ -274,11 +276,13 @@ def ovpn_write(s):
         for o in s["clients"]:
             if o is not c:
                 ccd += [f'push "route {mask(IPN(r))}"' for r in o["subnets"]]
+        if s.get("cross", True):
+            ccd += [f'push "route {mask(IPN(r))}"' for r in foreign_nets(d, s)]
         wfile(f"{dirp}/ccd/{c['cn']}", "\n".join(ccd) + "\n", 0o644)
     wfile(f"{OVPN_DIR}/cvm{s['id']}.conf", "\n".join(L) + "\n")
 
-def ovpn_apply(s):
-    ovpn_write(s)
+def ovpn_apply(s, d):
+    ovpn_write(s, d)
     unit = f"openvpn-server@cvm{s['id']}"
     if run(["systemctl", "is-active", "--quiet", unit]).returncode:
         sh(["systemctl", "enable", "--now", unit]); time.sleep(1)
@@ -324,9 +328,24 @@ def active(s):
 def pub(s):
     return {k: v for k, v in s.items() if k not in ("priv", "clients")}
 
+def foreign_nets(d, s):
+    """Rango y subredes de clientes de los demás servidores VPN."""
+    out = []
+    for k in ("wg", "ovpn"):
+        for o in d[k]:
+            if o is not s: out += [o["subnet"]] + [x for c in o["clients"] for x in c["subnets"]]
+    return list(dict.fromkeys(out))
+
+def refresh_ovpn(d, skip=None):
+    for o in d["ovpn"]:
+        if o is not skip:
+            try: ovpn_write(o, d)
+            except Exception as e: print("ovpn:", e)
+
 def apply_server(kind, s, d):
-    (wg_apply if kind == "wg" else ovpn_apply)(s)
+    wg_apply(s) if kind == "wg" else ovpn_apply(s, d)
     kernel_routes(s); fw(d)
+    refresh_ovpn(d, skip=s if kind == "ovpn" else None)  # los cambios de un servidor llegan a los demás
 
 @app.get("/api/servers/<kind>")
 @auth
@@ -350,7 +369,7 @@ def srv_create(kind):
         s = dict(id=sid, name=clean(j.get("name")) or f"{kind}-{sid}", iface=f"{kind}{sid}", port=port, proto=proto,
                  subnet=str(n), endpoint=clean(j.get("endpoint"), 100) or request.host.split(":")[0], dns=dns,
                  push_routes=nets(j.get("push_routes")), full_tunnel=bool(j.get("full_tunnel")),
-                 nat=bool(j.get("nat", True)), clients=[])
+                 nat=bool(j.get("nat", True)), cross=bool(j.get("cross", True)), clients=[])
         if kind == "wg":
             priv = sh(["wg", "genkey"])
             s.update(priv=priv, pub=sh(["wg", "pubkey"], inp=priv), address=f"{next(n.hosts())}/{n.prefixlen}")
@@ -402,9 +421,10 @@ def srv_edit(kind, sid):
         d = load(); s = find(d, kind, sid)
         s.update(name=clean(j.get("name")) or s["name"], endpoint=clean(j.get("endpoint"), 100) or s["endpoint"],
                  dns=chkip(j["dns"]) if j.get("dns") else "", push_routes=nets(j.get("push_routes")),
-                 full_tunnel=bool(j.get("full_tunnel")), nat=bool(j.get("nat")))
+                 full_tunnel=bool(j.get("full_tunnel")), nat=bool(j.get("nat")),
+                 cross=bool(j["cross"]) if "cross" in j else s.get("cross", True))
         if kind == "ovpn":
-            ovpn_write(s); run(["systemctl", "restart", f"openvpn-server@cvm{sid}"])
+            ovpn_write(s, d); run(["systemctl", "restart", f"openvpn-server@cvm{sid}"])
         fw(d); save(d)
     return jsonify(ok=True)
 
@@ -423,7 +443,7 @@ def srv_del(kind, sid):
             shutil.rmtree(f"{OVPN_DIR}/cvm{sid}", ignore_errors=True)
             try: os.remove(f"{OVPN_DIR}/cvm{sid}.conf")
             except OSError: pass
-        d[kind].remove(s); fw(d); save(d)
+        d[kind].remove(s); fw(d); refresh_ovpn(d); save(d)
     return jsonify(ok=True)
 
 @app.post("/api/servers/<kind>/<int:sid>/clients")
@@ -712,7 +732,7 @@ def boot():
         except Exception: pass
     for s in d["wg"] + d["ovpn"]: kernel_routes(s)
     for s in d["ovpn"]:
-        try: ovpn_write(s)
+        try: ovpn_write(s, d)
         except Exception as e: print("ovpn:", e)
 
 if __name__ == "__main__":
