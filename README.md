@@ -23,7 +23,7 @@ Pequeña utilidad para servidores Linux con panel web para gestionar **servidore
 ## Instalación
 
 ```bash
-git clone https://github.com/TU-USUARIO/core-vpn-manager.git
+git clone https://github.com/martiinferreroo/core-vpn-manager.git
 cd core-vpn-manager
 sudo ./install.sh
 ```
