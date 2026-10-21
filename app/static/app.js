@@ -194,21 +194,42 @@ async function dash() {
 }
 
 /* ---------- usuarios ---------- */
+let ME = "";
+function pwModal(u, after) {
+  const self = u === ME;
+  formModal(self ? "Cambiar mi contraseña" : `Cambiar contraseña de ${u}`, [
+    ...(self ? [{k: "current", label: "Contraseña actual", type: "password"}] : []),
+    {k: "password", label: "Nueva contraseña", type: "password", hint: "Mínimo 8 caracteres"},
+    {k: "repeat", label: "Repite la contraseña", type: "password"}],
+    async o => { if (o.password !== o.repeat) throw new Error("Las contraseñas no coinciden");
+      await api(`/users/${encodeURIComponent(u)}/password`, {method: "PUT", body: o}); toast("Contraseña actualizada"); if (after) after(); });
+}
 async function usersPage() {
-  const {users, me} = await api("/users");
+  const {users, me} = await api("/users"); ME = me;
   view.innerHTML = `<div class="top"><h1>Usuarios</h1><button class="primary" id="add">Añadir usuario</button></div>
-    <div class="panel"><table><tr><th>Usuario</th><th></th></tr>${users.map(u => `<tr><td>${esc(u)} ${u === me ? '<span class="pill ok">Tú</span>' : ""}</td>
-      <td class="act"><button class="sm" data-pw="${esc(u)}">Cambiar contraseña</button> ${u === me ? "" : `<button class="sm danger" data-del="${esc(u)}">Eliminar</button>`}</td></tr>`).join("")}</table></div>`;
-  const pw = [{k: "password", label: "Nueva contraseña", type: "password", hint: "Mínimo 8 caracteres"}, {k: "repeat", label: "Repite la contraseña", type: "password"}];
-  const same = o => { if (o.password !== o.repeat) throw new Error("Las contraseñas no coinciden"); };
-  $("#add").onclick = () => formModal("Añadir usuario", [{k: "username", label: "Nombre de usuario", hint: "3-32 caracteres: letras, números, . _ -"}, ...pw],
-    async o => { same(o); await api("/users", {method: "POST", body: o}); toast("Usuario creado"); usersPage(); }, "Crear usuario");
-  view.querySelectorAll("[data-pw]").forEach(b => b.onclick = () => { const u = b.dataset.pw;
-    formModal(`Cambiar contraseña de ${u}`, [...(u === me ? [{k: "current", label: "Contraseña actual", type: "password"}] : []), ...pw],
-      async o => { same(o); await api(`/users/${encodeURIComponent(u)}/password`, {method: "PUT", body: o}); toast("Contraseña actualizada"); }); });
+    <div class="panel"><table><tr><th>Usuario</th><th></th></tr>${users.map(u => `<tr><td>${esc(u.name)} ${u.name === me ? '<span class="pill ok">Tú</span>' : ""}${u.disabled ? ' <span class="pill">Desactivado</span>' : ""}</td>
+      <td class="act"><button class="sm" data-pw="${esc(u.name)}">Cambiar contraseña</button>
+      ${u.name === me ? "" : `<button class="sm" data-act="${esc(u.name)}" data-off="${u.disabled ? 1 : 0}">${u.disabled ? "Activar" : "Desactivar"}</button> <button class="sm danger" data-del="${esc(u.name)}">Eliminar</button>`}</td></tr>`).join("")}</table></div>`;
+  $("#add").onclick = () => formModal("Añadir usuario", [{k: "username", label: "Nombre de usuario", hint: "3-32 caracteres: letras, números, . _ -"},
+    {k: "password", label: "Contraseña", type: "password", hint: "Mínimo 8 caracteres"}, {k: "repeat", label: "Repite la contraseña", type: "password"}],
+    async o => { if (o.password !== o.repeat) throw new Error("Las contraseñas no coinciden"); await api("/users", {method: "POST", body: o}); toast("Usuario creado"); usersPage(); }, "Crear usuario");
+  view.querySelectorAll("[data-pw]").forEach(b => b.onclick = () => pwModal(b.dataset.pw));
+  view.querySelectorAll("[data-act]").forEach(b => b.onclick = guard(async () => {
+    await api(`/users/${encodeURIComponent(b.dataset.act)}/active`, {method: "PUT", body: {active: b.dataset.off === "1"}});
+    toast(b.dataset.off === "1" ? "Usuario activado" : "Usuario desactivado"); usersPage(); }));
   view.querySelectorAll("[data-del]").forEach(b => b.onclick = guard(async () => { if (!confirm(`¿Eliminar al usuario «${b.dataset.del}»?`)) return;
     await api("/users/" + encodeURIComponent(b.dataset.del), {method: "DELETE"}); toast("Usuario eliminado"); usersPage(); }));
 }
+
+/* En móvil las tablas se muestran como tarjetas: cada celda lleva su cabecera en data-l */
+function stackTables() {
+  view.querySelectorAll("table:not(.stack)").forEach(t => {
+    const h = [...t.rows[0].cells].map(c => c.textContent.trim());
+    [...t.rows].slice(1).forEach(r => [...r.cells].forEach((c, j) => c.dataset.l = h[j] || ""));
+    t.classList.add("stack");
+  });
+}
+new MutationObserver(stackTables).observe(view, {childList: true});
 
 /* ---------- router y sesión ---------- */
 function route() {
@@ -221,12 +242,13 @@ function route() {
   if (id || page === "dash") timer = setInterval(go, 5000);
 }
 function showLogin() { $("#app").hidden = true; $("#login").hidden = false; }
-function showApp(u) { $("#who").textContent = "Sesión: " + u; $("#login").hidden = true; $("#app").hidden = false; route(); }
+function showApp(u) { ME = u; $("#who").textContent = "Cuenta: " + u; $("#login").hidden = true; $("#app").hidden = false; route(); }
 $("#loginForm").onsubmit = async e => {
   e.preventDefault(); $("#loginErr").textContent = "";
   try { const r = await api("/login", {method: "POST", body: Object.fromEntries(new FormData(e.target))}); e.target.reset(); showApp(r.user); }
   catch (x) { $("#loginErr").textContent = x.message; }
 };
+$("#who").onclick = () => pwModal(ME);
 $("#logout").onclick = async () => { await api("/logout", {method: "POST"}).catch(() => {}); showLogin(); };
 window.addEventListener("hashchange", () => { if (!$("#app").hidden) route(); });
 fetch("/api/me").then(r => r.json()).then(j => j.user ? showApp(j.user) : showLogin());

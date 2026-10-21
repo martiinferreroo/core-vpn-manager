@@ -2,8 +2,6 @@
 
 Pequeña utilidad para servidores Linux con panel web para gestionar **servidores WireGuard**, **servidores OpenVPN**, **redirección de puertos** y la **tabla de rutas** del sistema. Opcionalmente instala también **Nginx Proxy Manager**, **AdGuard Home** y **Uptime Kuma** con Docker.
 
-<img src="https://img.shields.io/badge/STATUS-UNDER_DEVELOPMENT-yellow?style=for-the-badge&logo=git&logoColor=white&labelColor=black" alt="Under Development" />
-
 ## Características
 
 - **WireGuard**: crea servidores (puerto, rango de IPs, DNS, NAT, túnel completo), añade clientes con **IP fija** (editable después desde el panel de edición del cliente), descarga `.conf` o escanea el **código QR**. Los clientes pueden ser routers que enrutan subredes: se añaden automáticamente a `AllowedIPs` y a la tabla de rutas.
@@ -12,7 +10,8 @@ Pequeña utilidad para servidores Linux con panel web para gestionar **servidore
 - **Redirección de puertos** al estilo router: puerto externo, interno, IP interna, protocolo (TCP, UDP o ambos) y descripción. Se puede activar y desactivar cada regla.
 - **Rutas**: ver, añadir y eliminar rutas del sistema. Las rutas añadidas desde el panel se restauran al reiniciar.
 - **Panel** (dashboard) con CPU, memoria, disco, uptime, interfaces e IPs del servidor y los **clientes conectados ahora mismo** en todas las VPN.
-- **Usuarios**: varios usuarios del panel; añadir, eliminar y cambiar contraseñas (al cambiar una contraseña se cierran las demás sesiones de ese usuario).
+- **Usuarios**: varios usuarios del panel; añadir, eliminar, **desactivar/activar** y cambiar contraseñas (también la tuya, desde el menú lateral). Al cambiar una contraseña o desactivar a alguien se cierran sus sesiones abiertas.
+- Interfaz adaptada a **móvil**: menú superior deslizable, tablas en formato tarjeta y formularios a pantalla completa.
 - Login con límite de intentos, interfaz clara y responsive (con modo oscuro).
 
 ## Requisitos

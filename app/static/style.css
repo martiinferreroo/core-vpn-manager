@@ -67,9 +67,32 @@ dialog img{width:100%;background:#fff;border-radius:6px}
 #loginForm h1{margin-bottom:.25rem}#loginForm p{margin:0 0 1.25rem}
 #loginForm button{width:100%}
 @media (max-width:760px){
+  body{font-size:16px}
   #app{flex-direction:column}
-  aside{width:100%;height:auto;position:static;flex-direction:row;flex-wrap:wrap;align-items:center;padding:.75rem}
-  nav{flex-direction:row;flex-wrap:wrap}.brand br{display:none}
-  main{padding:1rem}
+  aside{width:100%;height:auto;position:sticky;top:0;z-index:10;flex-direction:row;flex-wrap:wrap;align-items:center;gap:.4rem .75rem;padding:.6rem .8rem}
+  .brand{flex:1;padding:0}.brand br{display:none}
+  aside #logout{order:2;padding:.3rem .7rem;min-height:36px}
+  #who{display:none}
+  nav{order:3;width:100%;flex:none;flex-direction:row;overflow-x:auto;gap:4px;padding-bottom:2px}
+  nav a{white-space:nowrap;padding:.55rem .85rem}
+  main{padding:1rem .85rem 4rem}
+  h1{font-size:1.25rem}
+  button{min-height:42px}button.sm{min-height:36px}
+  input,select,textarea{font-size:16px;min-height:42px}input[type=checkbox]{min-height:0;width:20px;height:20px}
+  .grid{grid-template-columns:1fr}
+  .stats{grid-template-columns:repeat(2,1fr);gap:.6rem}
+  .inline{grid-template-columns:1fr 1fr}.inline button{grid-column:1/-1}
+  .panel{padding:.8rem}.panel.mono{word-break:break-all}
+  dialog{width:100%;max-width:100%;margin:auto 0 0;border-radius:14px 14px 0 0;max-height:92vh;overflow:auto}
+  dialog footer button{flex:1}
+  #toast{left:.85rem;right:.85rem;bottom:.85rem;max-width:none}
+  table.stack,table.stack tbody{display:block}
+  table.stack tr:first-child{display:none}
+  table.stack tr{display:block;padding:.55rem 0;border-bottom:1px solid var(--line)}
+  table.stack tr:last-child{border-bottom:0}
+  table.stack td{display:flex;justify-content:space-between;gap:1rem;border:0;padding:.2rem 0;text-align:right;word-break:break-word}
+  table.stack td::before{content:attr(data-l);color:var(--dim);font-size:.82rem;text-align:left;flex:none}
+  table.stack td.act{justify-content:flex-start;flex-wrap:wrap;gap:.4rem;padding-top:.5rem}
+  table.stack td.act::before{content:none}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}

@@ -95,20 +95,29 @@ UNAME = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
 DUMMY = generate_password_hash("dummy")
 
 def users():
-    try: return json.load(open(USERS))
+    """{nombre: {hash, disabled}}. Acepta también el formato antiguo {nombre: hash}."""
+    try: raw = json.load(open(USERS))
     except Exception: return {}
+    out = {}
+    for k, v in raw.items():
+        v = v if isinstance(v, dict) else {"hash": v}
+        out[k] = {"hash": v["hash"], "disabled": bool(v.get("disabled"))}
+    return out
 
 def save_users(u): wfile(USERS, json.dumps(u, indent=1))
 def fp(h): return hashlib.sha256(h.encode()).hexdigest()[:16]
 
+def valid_session():
+    rec = users().get(session.get("u"))
+    return bool(rec) and not rec["disabled"] and session.get("f") == fp(rec["hash"])
+
 if not os.path.exists(USERS) and cfg.get("user") and cfg.get("hash"):  # migración de versiones anteriores
-    save_users({cfg["user"]: cfg["hash"]})
+    save_users({cfg["user"]: {"hash": cfg["hash"], "disabled": False}})
 
 def auth(f):
     @wraps(f)
     def w(*a, **k):
-        u, us = session.get("u"), users()
-        if u not in us or session.get("f") != fp(us[u]):
+        if not valid_session():
             session.clear(); return err("No autenticado", 401)
         return f(*a, **k)
     return w
@@ -658,7 +667,8 @@ def chkpw(p):
 
 @app.get("/api/users")
 @auth
-def u_list(): return jsonify(users=sorted(users()), me=session["u"])
+def u_list():
+    return jsonify(users=[{"name": n, "disabled": u["disabled"]} for n, u in sorted(users().items())], me=session["u"])
 
 @app.post("/api/users")
 @auth
@@ -668,7 +678,7 @@ def u_add():
     with LOCK:
         us = users()
         if name in us: raise Bad("Ese usuario ya existe")
-        us[name] = generate_password_hash(chkpw(j.get("password"))); save_users(us)
+        us[name] = {"hash": generate_password_hash(chkpw(j.get("password"))), "disabled": False}; save_users(us)
     return jsonify(ok=True)
 
 @app.put("/api/users/<name>/password")
@@ -679,9 +689,19 @@ def u_pw(name):
         us = users()
         if name not in us: raise Bad("Usuario no encontrado")
         me_ = name == session["u"]
-        if me_ and not check_password_hash(us[name], str(j.get("current", ""))): raise Bad("La contraseña actual no es correcta")
-        us[name] = generate_password_hash(chkpw(j.get("password"))); save_users(us)
-        if me_: session["f"] = fp(us[name])  # mantiene abierta esta sesión; las demás de ese usuario se cierran
+        if me_ and not check_password_hash(us[name]["hash"], str(j.get("current", ""))): raise Bad("La contraseña actual no es correcta")
+        us[name]["hash"] = generate_password_hash(chkpw(j.get("password"))); save_users(us)
+        if me_: session["f"] = fp(us[name]["hash"])  # mantiene abierta esta sesión; las demás de ese usuario se cierran
+    return jsonify(ok=True)
+
+@app.put("/api/users/<name>/active")
+@auth
+def u_active(name):
+    if name == session["u"]: raise Bad("No puedes desactivar tu propio usuario")
+    with LOCK:
+        us = users()
+        if name not in us: raise Bad("Usuario no encontrado")
+        us[name]["disabled"] = not bool(request.get_json(force=True).get("active")); save_users(us)
     return jsonify(ok=True)
 
 @app.delete("/api/users/<name>")
@@ -702,8 +722,9 @@ def login():
     ip = request.remote_addr; n, t = FAILS.get(ip, (0, 0))
     if n >= 5 and time.time() - t < 60: return err("Demasiados intentos. Espera un minuto.", 429)
     j = request.get_json(force=True, silent=True) or {}
-    name = str(j.get("user", "")); h = users().get(name)
+    name = str(j.get("user", "")); rec = users().get(name); h = rec["hash"] if rec else None
     if check_password_hash(h or DUMMY, str(j.get("password", ""))) and h:
+        if rec["disabled"]: return err("Esta cuenta está desactivada", 403)
         FAILS.pop(ip, None); session.permanent = True; session["u"] = name; session["f"] = fp(h)
         return jsonify(ok=True, user=name)
     FAILS[ip] = (n + 1, time.time())
@@ -715,8 +736,7 @@ def logout():
 
 @app.get("/api/me")
 def me():
-    u, us = session.get("u"), users()
-    return jsonify(user=u if u in us and session.get("f") == fp(us[u]) else None)
+    return jsonify(user=session.get("u") if valid_session() else None)
 
 @app.get("/")
 def index(): return send_from_directory(app.static_folder, "index.html")

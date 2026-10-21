@@ -76,7 +76,7 @@ json.dump({"port": int(e["CVM_PORT"]), "secret": e["CVM_SECRET"], "host": "0.0.0
 up = os.path.join(os.path.dirname(e["CVM_OUT"]), "users.json")
 try: users = json.load(open(up))          # en reinstalaciones se conservan los demás usuarios
 except Exception: users = {}
-users[e["CVM_USER"]] = generate_password_hash(e["CVM_PASS"])
+users[e["CVM_USER"]] = {"hash": generate_password_hash(e["CVM_PASS"]), "disabled": False}
 with os.fdopen(os.open(up, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f: json.dump(users, f, indent=1)
 PY
 chmod 600 "$CONF"/*.json
