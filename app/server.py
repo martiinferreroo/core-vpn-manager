@@ -151,6 +151,11 @@ def fw(d):
             for br in ("docker0", "br-+"):  # el tráfico hacia contenedores Docker conserva la IP real del cliente
                 ipt("-t", "nat", "-A", "CVM_NAT", "-s", s["subnet"], "-o", br, "-j", "RETURN")
             ipt("-t", "nat", "-A", "CVM_NAT", "-s", s["subnet"], "!", "-o", i, "-j", "MASQUERADE")
+            for c in s["clients"]:  # redes tras routers cliente (pfSense...): salen a Internet con la IP del servidor
+                for n in c["subnets"]:
+                    for o in ("docker0", "br-+", "wg+", "ovpn+"):  # hacia otras VPN o Docker se conserva la IP real
+                        ipt("-t", "nat", "-A", "CVM_NAT", "-s", n, "-o", o, "-j", "RETURN")
+                    ipt("-t", "nat", "-A", "CVM_NAT", "-s", n, "-j", "MASQUERADE")
     for f in d["forwards"]:
         if not f["enabled"]: continue
         for p in (["tcp", "udp"] if f["proto"] == "both" else [f["proto"]]):
