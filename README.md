@@ -1,5 +1,9 @@
 # Core VPN Manager
 
+---
+<img src="https://img.shields.io/badge/STATUS-UNDER_DEVELOPMENT-yellow?style=for-the-badge&logo=git&logoColor=white&labelColor=black" alt="Under Development" />
+---
+
 Pequeña utilidad para servidores Linux con panel web para gestionar **servidores WireGuard**, **servidores OpenVPN**, **redirección de puertos** y la **tabla de rutas** del sistema. Opcionalmente instala también **Nginx Proxy Manager**, **AdGuard Home** y **Uptime Kuma** con Docker.
 
 ## Características
